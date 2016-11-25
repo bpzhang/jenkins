@@ -282,7 +282,6 @@ public abstract class ExtensionFinder implements ExtensionPoint {
                 LOGGER.log(Level.SEVERE, "Failed to create Guice container from all the plugins",e);
                 // failing to load all bindings are disastrous, so recover by creating minimum that works
                 // by just including the core
-                // TODO this recovery is pretty much useless; startup crashes anyway
                 container = Guice.createInjector(new SezpozModule(loadSezpozIndices(Jenkins.class.getClassLoader())));
             }
 
@@ -423,10 +422,7 @@ public abstract class ExtensionFinder implements ExtensionPoint {
                     public T get() {
                         try {
                             return base.get();
-                        } catch (Exception e) {
-                            error(key, e);
-                            return null;
-                        } catch (LinkageError e) {
+                        } catch (Exception | LinkageError e) {
                             error(key, e);
                             return null;
                         }
@@ -435,7 +431,7 @@ public abstract class ExtensionFinder implements ExtensionPoint {
                         if (verbose) {
                             LOGGER.log(Level.WARNING, "Failed to instantiate " + key + "; skipping this component", x);
                         } else {
-                            LOGGER.log(Level.WARNING, "Failed to instantiate optional component {0}; skipping", key.getTypeLiteral());
+                            LOGGER.log(Level.INFO, "Failed to instantiate optional component {0}; skipping", key.getTypeLiteral());
                             LOGGER.log(Level.FINE, key.toString(), x);
                         }
                     }
@@ -479,7 +475,11 @@ public abstract class ExtensionFinder implements ExtensionPoint {
                     m.invoke(ecl, c);
                     c.getConstructors();
                     c.getMethods();
-                    c.getFields();
+                    for (Field f : c.getFields()) {
+                        if (f.getAnnotation(javax.inject.Inject.class) != null || f.getAnnotation(com.google.inject.Inject.class) != null) {
+                            resolve(f.getType());
+                        }
+                    }
                     LOGGER.log(Level.FINER, "{0} looks OK", c);
                     while (c != Object.class) {
                         c.getGenericSuperclass();
@@ -493,10 +493,7 @@ public abstract class ExtensionFinder implements ExtensionPoint {
             @SuppressWarnings({"unchecked", "ChainOfInstanceofChecks"})
             @Override
             protected void configure() {
-                int id=0;
-
                 for (final IndexItem<?,Object> item : index) {
-                    id++;
                     boolean optional = isOptional(item.annotation());
                     try {
                         AnnotatedElement e = item.element();
@@ -521,8 +518,8 @@ public abstract class ExtensionFinder implements ExtensionPoint {
 
                             resolve(extType);
 
-                            // use arbitrary id to make unique key, because Guice wants that.
-                            Key key = Key.get(extType, Names.named(String.valueOf(id)));
+                            // make unique key, because Guice wants that.
+                            Key key = Key.get(extType, Names.named(item.className() + "." + item.memberName()));
                             annotations.put(key,a);
                             bind(key).toProvider(new Provider() {
                                     public Object get() {

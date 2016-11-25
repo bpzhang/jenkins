@@ -41,7 +41,7 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 
 import jline.UnsupportedTerminal;
-import jline.Terminal;
+import jline.TerminalFactory;
 import org.kohsuke.args4j.Argument;
 
 /**
@@ -65,10 +65,18 @@ public class GroovyshCommand extends CLICommand {
 
         // this being remote means no jline capability is available
         System.setProperty("jline.terminal", UnsupportedTerminal.class.getName());
-        Terminal.resetTerminal();
+        TerminalFactory.reset();
+
+        StringBuilder commandLine = new StringBuilder();
+        for (String arg : args) {
+            if (commandLine.length() > 0) {
+                commandLine.append(" ");
+            }
+            commandLine.append(arg);
+        }
 
         Groovysh shell = createShell(stdin, stdout, stderr);
-        return shell.run(args.toArray(new String[args.size()]));
+        return shell.run(commandLine.toString());
     }
 
     @SuppressWarnings({"unchecked","rawtypes"})
@@ -88,7 +96,7 @@ public class GroovyshCommand extends CLICommand {
             private static final long serialVersionUID = 1L;
 
             @SuppressWarnings("unused")
-            @edu.umd.cs.findbugs.annotations.SuppressWarnings(value="UMAC_UNCALLABLE_METHOD_OF_ANONYMOUS_CLASS",justification="Closure invokes this via reflection")
+            @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(value="UMAC_UNCALLABLE_METHOD_OF_ANONYMOUS_CLASS",justification="Closure invokes this via reflection")
             public Object doCall(Object[] args) {
                 assert(args.length == 1);
                 assert(args[0] instanceof Shell);
@@ -101,7 +109,7 @@ public class GroovyshCommand extends CLICommand {
             }
         };
         Groovysh shell = new Groovysh(cl, binding, io, registrar);
-        shell.getImports().add("import hudson.model.*");
+        shell.getImports().add("hudson.model.*");
 
         // defaultErrorHook doesn't re-throw IOException, so ShellRunner in
         // Groovysh will keep looping forever if we don't terminate when the
@@ -111,7 +119,7 @@ public class GroovyshCommand extends CLICommand {
             private static final long serialVersionUID = 1L;
 
             @SuppressWarnings("unused")
-            @edu.umd.cs.findbugs.annotations.SuppressWarnings(value="UMAC_UNCALLABLE_METHOD_OF_ANONYMOUS_CLASS",justification="Closure invokes this via reflection")
+            @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(value="UMAC_UNCALLABLE_METHOD_OF_ANONYMOUS_CLASS",justification="Closure invokes this via reflection")
             public Object doCall(Object[] args) throws ChannelClosedException {
                 if (args.length == 1 && args[0] instanceof ChannelClosedException) {
                     throw (ChannelClosedException)args[0];

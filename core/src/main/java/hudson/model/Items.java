@@ -120,7 +120,7 @@ public class Items {
      * Returns all the registered {@link TopLevelItemDescriptor}s that the current security principal is allowed to
      * create within the specified item group.
      *
-     * @since TODO
+     * @since 1.607
      */
     public static List<TopLevelItemDescriptor> all(ItemGroup c) {
         return all(Jenkins.getAuthentication(), c);
@@ -130,7 +130,7 @@ public class Items {
      * Returns all the registered {@link TopLevelItemDescriptor}s that the specified security principal is allowed to
      * create within the specified item group.
      *
-     * @since TODO
+     * @since 1.607
      */
     public static List<TopLevelItemDescriptor> all(Authentication a, ItemGroup c) {
         List<TopLevelItemDescriptor> result = new ArrayList<TopLevelItemDescriptor>();
@@ -182,15 +182,21 @@ public class Items {
      * Does the opposite of {@link #toNameList(Collection)}.
      */
     public static <T extends Item> List<T> fromNameList(ItemGroup context, @Nonnull String list, @Nonnull Class<T> type) {
-        Jenkins hudson = Jenkins.getInstance();
-
+        final Jenkins jenkins = Jenkins.getInstance();
+        
         List<T> r = new ArrayList<T>();
+        if (jenkins == null) {
+            return r;
+        }
+        
         StringTokenizer tokens = new StringTokenizer(list,",");
         while(tokens.hasMoreTokens()) {
             String fullName = tokens.nextToken().trim();
-            T item = hudson.getItem(fullName, context, type);
-            if(item!=null)
-                r.add(item);
+            if (StringUtils.isNotEmpty(fullName)) {
+                T item = jenkins.getItem(fullName, context, type);
+                if(item!=null)
+                    r.add(item);
+            }
         }
         return r;
     }

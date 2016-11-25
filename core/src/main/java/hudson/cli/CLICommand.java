@@ -29,6 +29,7 @@ import hudson.ExtensionList;
 import hudson.ExtensionPoint;
 import hudson.cli.declarative.CLIMethod;
 import hudson.ExtensionPoint.LegacyInstancesAreScopedToHudson;
+import jenkins.util.SystemProperties;
 import hudson.cli.declarative.OptionHandlerExtension;
 import jenkins.model.Jenkins;
 import hudson.remoting.Callable;
@@ -123,6 +124,13 @@ public abstract class CLICommand implements ExtensionPoint, Cloneable {
      */
     public transient PrintStream stdout,stderr;
 
+    /**
+     * Shared text, which is reported back to CLI if an error happens in commands 
+     * taking lists of parameters.
+     * @since 2.26
+     */
+    static final String CLI_LISTPARAM_SUMMARY_ERROR_TEXT = "Error occurred while performing this command, see previous stderr output.";
+    
     /**
      * Connected to stdin of the CLI agent.
      *
@@ -467,7 +475,7 @@ public abstract class CLICommand implements ExtensionPoint, Cloneable {
         }
 
         public String call() throws IOException {
-            return System.getProperty(name);
+            return SystemProperties.getString(name);
         }
 
         private static final long serialVersionUID = 1L;
@@ -523,9 +531,7 @@ public abstract class CLICommand implements ExtensionPoint, Cloneable {
     protected CLICommand createClone() {
         try {
             return getClass().newInstance();
-        } catch (IllegalAccessException e) {
-            throw new AssertionError(e);
-        } catch (InstantiationException e) {
+        } catch (IllegalAccessException | InstantiationException e) {
             throw new AssertionError(e);
         }
     }

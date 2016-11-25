@@ -36,7 +36,10 @@ import hudson.util.FormValidation.CheckMethod;
 import hudson.util.ReflectionUtils;
 import hudson.util.ReflectionUtils.Parameter;
 import hudson.views.ListViewColumn;
+import jenkins.model.GlobalConfiguration;
+import jenkins.model.GlobalConfigurationCategory;
 import jenkins.model.Jenkins;
+import jenkins.util.io.OnMaster;
 import net.sf.json.JSONArray;
 import net.sf.json.JSONObject;
 import org.kohsuke.stapler.*;
@@ -123,7 +126,7 @@ import javax.annotation.Nonnull;
  * @author Kohsuke Kawaguchi
  * @see Describable
  */
-public abstract class Descriptor<T extends Describable<T>> implements Saveable {
+public abstract class Descriptor<T extends Describable<T>> implements Saveable, OnMaster {
     /**
      * The class being described by this descriptor.
      */
@@ -592,12 +595,8 @@ public abstract class Descriptor<T extends Describable<T>> implements Saveable {
             }
         } catch (NoSuchMethodException e) {
             throw new AssertionError(e); // impossible
-        } catch (InstantiationException e) {
+        } catch (InstantiationException | IllegalAccessException | RuntimeException e) {
             throw new Error("Failed to instantiate "+clazz+" from "+formData,e);
-        } catch (IllegalAccessException e) {
-            throw new Error("Failed to instantiate "+clazz+" from "+formData,e);
-        } catch (RuntimeException e) {
-            throw new RuntimeException("Failed to instantiate "+clazz+" from "+formData,e);
         }
     }
 
@@ -640,7 +639,13 @@ public abstract class Descriptor<T extends Describable<T>> implements Saveable {
             if (isApplicable(actualType, json)) {
                 LOGGER.log(Level.FINE, "switching to newInstance {0} {1}", new Object[] {actualType.getName(), json});
                 try {
-                    return Jenkins.getActiveInstance().getDescriptor(actualType).newInstance(Stapler.getCurrentRequest(), json);
+                    final Descriptor descriptor = Jenkins.getActiveInstance().getDescriptor(actualType);
+                    if (descriptor != null) {
+                        return descriptor.newInstance(Stapler.getCurrentRequest(), json);
+                    } else {
+                        LOGGER.log(Level.WARNING, "Descriptor not found. Falling back to default instantiation "
+                                + actualType.getName() + " " + json);
+                    }
                 } catch (Exception x) {
                     LOGGER.log(Level.WARNING, "falling back to default instantiation " + actualType.getName() + " " + json, x);
                     // If nested objects are not using newInstance, bindJSON will wind up throwing the same exception anyway,
@@ -807,7 +812,18 @@ public abstract class Descriptor<T extends Describable<T>> implements Saveable {
     public String getGlobalConfigPage() {
         return getViewPage(clazz, getPossibleViewNames("global"), null);
     }
-    
+
+    /**
+     * Define the global configuration category the global config of this Descriptor is in.
+     *
+     * @return never null, always the same value for a given instance of {@link Descriptor}.
+     *
+     * @since 2.0, used to be in {@link GlobalConfiguration} before that.
+     */
+    public GlobalConfigurationCategory getCategory() {
+        return GlobalConfigurationCategory.get(GlobalConfigurationCategory.Unclassified.class);
+    }
+
     private String getViewPage(Class<?> clazz, String pageName, String defaultValue) {
         return getViewPage(clazz,Collections.singleton(pageName),defaultValue);
     }
@@ -1129,7 +1145,7 @@ public abstract class Descriptor<T extends Describable<T>> implements Saveable {
                         .generateResponse(req, rsp, node);
             } else {
                 // for now, we can't really use the field name that caused the problem.
-                new Failure(getMessage()).generateResponse(req,rsp,node);
+                new Failure(getMessage()).generateResponse(req,rsp,node,getCause());
             }
         }
     }

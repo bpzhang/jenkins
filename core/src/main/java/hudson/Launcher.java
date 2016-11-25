@@ -42,6 +42,8 @@ import org.apache.commons.io.input.NullInputStream;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 
+import javax.annotation.CheckForNull;
+import javax.annotation.concurrent.GuardedBy;
 import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -130,7 +132,7 @@ public abstract class Launcher {
      * @deprecated since 2008-11-16.
      *      See the javadoc for why this is inherently unreliable. If you are trying to
      *      figure out the current {@link Computer} from within a build, use
-     *      {@link Computer#currentComputer()}  
+     *      {@link FilePath#toComputer()} or {@link Computer#currentComputer()}.
      */
     @Deprecated
     public Computer getComputer() {
@@ -297,7 +299,7 @@ public abstract class Launcher {
          *
          * <p>
          * In adition to what the current process
-         * is inherited (if this is going to be launched from a slave agent, that
+         * is inherited (if this is going to be launched from a agent agent, that
          * becomes the "current" process), these variables will be also set.
          */
         public ProcStarter envs(Map<String, String> overrides) {
@@ -383,9 +385,25 @@ public abstract class Launcher {
 
         /**
          * Starts the process and waits for its completion.
+         * @return Return code of the invoked process
+         * @throws IOException Operation error (e.g. remote call failure)
+         * @throws InterruptedException The process has been interrupted
          */
         public int join() throws IOException, InterruptedException {
-            return start().join();
+            // The logging around procHolderForJoin prevents the preliminary object deallocation we saw in JENKINS-23271
+            final Proc procHolderForJoin = start();
+            LOGGER.log(Level.FINER, "Started the process {0}", procHolderForJoin);
+            try {
+                final int returnCode = procHolderForJoin.join();
+                if (LOGGER.isLoggable(Level.FINER)) {
+                    LOGGER.log(Level.FINER, "Process {0} has finished with the return code {1}", new Object[]{procHolderForJoin, returnCode});
+                }
+                return returnCode;
+            } finally {
+                if (procHolderForJoin.isAlive()) { // Should never happen but this forces Proc to not be removed and early GC by escape analysis
+                    LOGGER.log(Level.WARNING, "Process not finished after call to join() completed");
+                }
+            }
         }
 
         /**
@@ -611,7 +629,7 @@ public abstract class Launcher {
      *      from the current process
      * @param envVars
      *      Environment variable overrides. In addition to what the current process
-     *      is inherited (if this is going to be launched from a slave agent, that
+     *      is inherited (if this is going to be launched from an agent, that
      *      becomes the "current" process), these variables will be also set.
      */
     public abstract Channel launchChannel(String[] cmd, OutputStream out, FilePath workDir, Map<String,String> envVars) throws IOException, InterruptedException;

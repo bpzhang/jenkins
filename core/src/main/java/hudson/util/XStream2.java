@@ -43,7 +43,7 @@ import com.thoughtworks.xstream.io.HierarchicalStreamDriver;
 import com.thoughtworks.xstream.io.HierarchicalStreamReader;
 import com.thoughtworks.xstream.io.HierarchicalStreamWriter;
 import com.thoughtworks.xstream.mapper.CannotResolveClassException;
-import edu.umd.cs.findbugs.annotations.SuppressWarnings;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.PluginManager;
 import hudson.PluginWrapper;
 import hudson.diagnosis.OldDataMonitor;
@@ -106,7 +106,7 @@ public class XStream2 extends XStream {
     public Object unmarshal(HierarchicalStreamReader reader, Object root, DataHolder dataHolder) {
         // init() is too early to do this
         // defensive because some use of XStream happens before plugins are initialized.
-        Jenkins h = Jenkins.getInstance();
+        Jenkins h = Jenkins.getInstanceOrNull();
         if(h!=null && h.pluginManager!=null && h.pluginManager.uberClassLoader!=null) {
             setClassLoader(h.pluginManager.uberClassLoader);
         }
@@ -151,7 +151,6 @@ public class XStream2 extends XStream {
         registerConverter(new ImmutableSortedSetConverter(getMapper(),getReflectionProvider()),10);
         registerConverter(new ImmutableSetConverter(getMapper(),getReflectionProvider()),10);
         registerConverter(new ImmutableListConverter(getMapper(),getReflectionProvider()),10);
-        registerConverter(new ConcurrentHashMapConverter(getMapper(),getReflectionProvider()),10);
         registerConverter(new CopyOnWriteMap.Tree.ConverterImpl(getMapper()),10); // needs to override MapConverter
         registerConverter(new DescribableList.ConverterImpl(getMapper()),10); // explicitly added to handle subtypes
         registerConverter(new Label.ConverterImpl(),10);
@@ -416,13 +415,13 @@ public class XStream2 extends XStream {
 
         private PluginManager pm;
 
-        @SuppressWarnings("NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE") // classOwnership checked for null so why does FB complain?
+        @SuppressFBWarnings("NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE") // classOwnership checked for null so why does FB complain?
         @Override public String ownerOf(Class<?> clazz) {
             if (classOwnership != null) {
                 return classOwnership.ownerOf(clazz);
             }
             if (pm == null) {
-                Jenkins j = Jenkins.getInstance();
+                Jenkins j = Jenkins.getInstanceOrNull();
                 if (j != null) {
                     pm = j.getPluginManager();
                 }

@@ -26,10 +26,8 @@ package hudson.model;
 
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
-import com.google.common.collect.ImmutableList;
 import com.infradna.tool.bridge_method_injector.WithBridgeMethods;
 import hudson.BulkChange;
-import hudson.CopyOnWrite;
 import hudson.ExtensionList;
 import hudson.ExtensionPoint;
 import hudson.Util;
@@ -38,7 +36,6 @@ import hudson.init.Initializer;
 import static hudson.init.InitMilestone.JOB_LOADED;
 import static hudson.util.Iterators.reverse;
 
-import hudson.cli.declarative.CLIMethod;
 import hudson.cli.declarative.CLIResolver;
 import hudson.model.labels.LabelAssignmentAction;
 import hudson.model.queue.AbstractQueueTask;
@@ -65,7 +62,6 @@ import hudson.model.queue.CauseOfBlockage.BecauseLabelIsOffline;
 import hudson.model.queue.CauseOfBlockage.BecauseNodeIsBusy;
 import hudson.model.queue.WorkUnitContext;
 import hudson.security.AccessControlled;
-import hudson.security.Permission;
 import jenkins.security.QueueItemAuthenticatorProvider;
 import jenkins.util.Timer;
 import hudson.triggers.SafeTimerTask;
@@ -125,6 +121,8 @@ import org.kohsuke.accmod.restrictions.DoNotUse;
 
 import com.thoughtworks.xstream.XStream;
 import com.thoughtworks.xstream.converters.basic.AbstractSingleValueConverter;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import jenkins.util.SystemProperties;
 import javax.annotation.CheckForNull;
 import javax.annotation.Nonnegative;
 import jenkins.model.queue.AsynchronousExecution;
@@ -172,6 +170,7 @@ import org.kohsuke.stapler.interceptor.RequirePOST;
 public class Queue extends ResourceController implements Saveable {
 
     /**
+
      * Items that are waiting for its quiet period to pass.
      *
      * <p>
@@ -295,6 +294,11 @@ public class Queue extends ResourceController implements Saveable {
             maintain();
             return null;
         }
+
+        @Override
+        public String toString() {
+            return "Periodic Jenkins queue maintenance";
+        }
     });
 
     private transient final ReentrantLock lock = new ReentrantLock();
@@ -339,19 +343,21 @@ public class Queue extends ResourceController implements Saveable {
     public void load() {
         lock.lock();
         try { try {
+            // Clear items, for the benefit of reloading.
+            waitingList.clear();
+            blockedProjects.clear();
+            buildables.clear();
+            pendings.clear();
             // first try the old format
             File queueFile = getQueueFile();
             if (queueFile.exists()) {
-                BufferedReader in = new BufferedReader(new InputStreamReader(new FileInputStream(queueFile)));
-                try {
+                try (BufferedReader in = new BufferedReader(new InputStreamReader(new FileInputStream(queueFile)))) {
                     String line;
                     while ((line = in.readLine()) != null) {
                         AbstractProject j = Jenkins.getInstance().getItemByFullName(line, AbstractProject.class);
                         if (j != null)
                             j.scheduleBuild();
                     }
-                } finally {
-                    in.close();
                 }
                 // discard the queue file now that we are done
                 queueFile.delete();
@@ -451,7 +457,6 @@ public class Queue extends ResourceController implements Saveable {
     /**
      * Wipes out all the items currently in the queue, as if all of them are cancelled at once.
      */
-    @CLIMethod(name="clear-queue")
     public void clear() {
         Jenkins.getInstance().checkPermission(Jenkins.ADMINISTER);
         lock.lock();
@@ -607,6 +612,9 @@ public class Queue extends ResourceController implements Saveable {
             for (Item item : duplicatesInQueue) {
                 for (FoldableAction a : Util.filter(actions, FoldableAction.class)) {
                     a.foldIntoExisting(item, p, actions);
+                    if (LOGGER.isLoggable(Level.FINE)) {
+                        LOGGER.log(Level.FINE, "after folding {0}, {1} includes {2}", new Object[] {a, item, item.getAllActions()});
+                    }
                 }
             }
 
@@ -1044,7 +1052,13 @@ public class Queue extends ResourceController implements Saveable {
             List<Item> result = new ArrayList<Item>();
             result.addAll(blockedProjects.getAll(t));
             result.addAll(buildables.getAll(t));
-            result.addAll(pendings.getAll(t));
+            // Do not include pendings—we have already finalized WorkUnitContext.actions.
+            if (LOGGER.isLoggable(Level.FINE)) {
+                List<BuildableItem> thePendings = pendings.getAll(t);
+                if (!thePendings.isEmpty()) {
+                    LOGGER.log(Level.FINE, "ignoring {0} during scheduleInternal", thePendings);
+                }
+            }
             for (Item item : waitingList) {
                 if (item.task.equals(t)) {
                     result.add(item);
@@ -1091,25 +1105,7 @@ public class Queue extends ResourceController implements Saveable {
      * Returns true if this queue contains the said project.
      */
     public boolean contains(Task t) {
-        final Snapshot snapshot = this.snapshot;
-        for (Item item : snapshot.blockedProjects) {
-            if (item.task.equals(t))
-                return true;
-        }
-        for (Item item : snapshot.buildables) {
-            if (item.task.equals(t))
-                return true;
-        }
-        for (Item item : snapshot.pendings) {
-            if (item.task.equals(t))
-                return true;
-        }
-        for (Item item : snapshot.waitingList) {
-            if (item.task.equals(t)) {
-                return true;
-            }
-        }
-        return false;
+        return getItem(t)!=null;
     }
 
     /**
@@ -1181,7 +1177,8 @@ public class Queue extends ResourceController implements Saveable {
      * @since 1.592
      */
     public static void withLock(Runnable runnable) {
-        final Jenkins jenkins = Jenkins.getInstance();
+        final Jenkins jenkins = Jenkins.getInstanceOrNull();
+        // TODO confirm safe to assume non-null and use getInstance()
         final Queue queue = jenkins == null ? null : jenkins.getQueue();
         if (queue == null) {
             runnable.run();
@@ -1202,7 +1199,8 @@ public class Queue extends ResourceController implements Saveable {
      * @since 1.592
      */
     public static <V, T extends Throwable> V withLock(hudson.remoting.Callable<V, T> callable) throws T {
-        final Jenkins jenkins = Jenkins.getInstance();
+        final Jenkins jenkins = Jenkins.getInstanceOrNull();
+        // TODO confirm safe to assume non-null and use getInstance()
         final Queue queue = jenkins == null ? null : jenkins.getQueue();
         if (queue == null) {
             return callable.call();
@@ -1222,7 +1220,8 @@ public class Queue extends ResourceController implements Saveable {
      * @since 1.592
      */
     public static <V> V withLock(java.util.concurrent.Callable<V> callable) throws Exception {
-        final Jenkins jenkins = Jenkins.getInstance();
+        final Jenkins jenkins = Jenkins.getInstanceOrNull();
+        // TODO confirm safe to assume non-null and use getInstance()
         final Queue queue = jenkins == null ? null : jenkins.getQueue();
         if (queue == null) {
             return callable.call();
@@ -1239,7 +1238,8 @@ public class Queue extends ResourceController implements Saveable {
      * @since 1.618
      */
     public static boolean tryWithLock(Runnable runnable) {
-        final Jenkins jenkins = Jenkins.getInstance();
+        final Jenkins jenkins = Jenkins.getInstanceOrNull();
+        // TODO confirm safe to assume non-null and use getInstance()
         final Queue queue = jenkins == null ? null : jenkins.getQueue();
         if (queue == null) {
             runnable.run();
@@ -1255,7 +1255,8 @@ public class Queue extends ResourceController implements Saveable {
      * @since 1.618
      */
     public static Runnable wrapWithLock(Runnable runnable) {
-        final Jenkins jenkins = Jenkins.getInstance();
+        final Jenkins jenkins = Jenkins.getInstanceOrNull();
+        // TODO confirm safe to assume non-null and use getInstance()
         final Queue queue = jenkins == null ? null : jenkins.getQueue();
         return queue == null ? runnable : new LockedRunnable(runnable);
     }
@@ -1267,7 +1268,8 @@ public class Queue extends ResourceController implements Saveable {
      * @since 1.618
      */
     public static <V, T extends Throwable> hudson.remoting.Callable<V, T> wrapWithLock(hudson.remoting.Callable<V, T> callable) {
-        final Jenkins jenkins = Jenkins.getInstance();
+        final Jenkins jenkins = Jenkins.getInstanceOrNull();
+        // TODO confirm safe to assume non-null and use getInstance()
         final Queue queue = jenkins == null ? null : jenkins.getQueue();
         return queue == null ? callable : new LockedHRCallable<>(callable);
     }
@@ -1279,7 +1281,8 @@ public class Queue extends ResourceController implements Saveable {
      * @since 1.618
      */
     public static <V> java.util.concurrent.Callable<V> wrapWithLock(java.util.concurrent.Callable<V> callable) {
-        final Jenkins jenkins = Jenkins.getInstance();
+        final Jenkins jenkins = Jenkins.getInstanceOrNull();
+        // TODO confirm safe to assume non-null and use getInstance()
         final Queue queue = jenkins == null ? null : jenkins.getQueue();
         return queue == null ? callable : new LockedJUCCallable<V>(callable);
     }
@@ -1384,7 +1387,7 @@ public class Queue extends ResourceController implements Saveable {
         lock.lock();
         try { try {
 
-            LOGGER.log(Level.FINE, "Queue maintenance started {0}", this);
+            LOGGER.log(Level.FINE, "Queue maintenance started on {0} with {1}", new Object[] {this, snapshot});
 
             // The executors that are currently waiting for a job to run.
             Map<Executor, JobOffer> parked = new HashMap<Executor, JobOffer>();
@@ -1415,12 +1418,12 @@ public class Queue extends ResourceController implements Saveable {
                 }
                 // pending -> buildable
                 for (BuildableItem p: lostPendings) {
-                    LOGGER.log(Level.INFO,
+                    LOGGER.log(Level.FINE,
                             "BuildableItem {0}: pending -> buildable as the assigned executor disappeared",
                             p.task.getFullDisplayName());
                     p.isPending = false;
                     pendings.remove(p);
-                    makeBuildable(p);
+                    makeBuildable(p); // TODO whatever this is for, the return value is being ignored, so this does nothing at all
                 }
             }
 
@@ -2478,7 +2481,7 @@ public class Queue extends ResourceController implements Saveable {
             Label label = getAssignedLabel();
             List<Node> allNodes = jenkins.getNodes();
             if (allNodes.isEmpty())
-                label = null;    // no master/slave. pointless to talk about nodes
+                label = null;    // no master/agent. pointless to talk about nodes
 
             if (label != null) {
                 Set<Node> nodes = label.getNodes();
@@ -2773,11 +2776,13 @@ public class Queue extends ResourceController implements Saveable {
             return x;
         }
 
+        @SuppressFBWarnings(value = "IA_AMBIGUOUS_INVOCATION_OF_INHERITED_OR_OUTER_METHOD",
+                justification = "It will invoke the inherited clear() method according to Java semantics. "
+                              + "FindBugs recommends suppresing warnings in such case")
         public void cancelAll() {
             for (T t : new ArrayList<T>(this))
                 t.cancel(Queue.this);
-
-            clear();    // just to be sure
+            clear();
         }
     }
 
@@ -2793,6 +2798,11 @@ public class Queue extends ResourceController implements Saveable {
             this.blockedProjects = new ArrayList<BlockedItem>(blockedProjects);
             this.buildables = new ArrayList<BuildableItem>(buildables);
             this.pendings = new ArrayList<BuildableItem>(pendings);
+        }
+
+        @Override
+        public String toString() {
+            return "Queue.Snapshot{waitingList=" + waitingList + ";blockedProjects=" + blockedProjects + ";buildables=" + buildables + ";pendings=" + pendings + "}";
         }
     }
     

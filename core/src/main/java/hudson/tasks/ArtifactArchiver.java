@@ -28,6 +28,7 @@ import jenkins.MasterToSlaveFileCallable;
 import hudson.Launcher;
 import hudson.Util;
 import hudson.Extension;
+import jenkins.util.SystemProperties;
 import hudson.model.AbstractProject;
 import hudson.model.Result;
 import hudson.model.Run;
@@ -38,6 +39,7 @@ import hudson.util.FormValidation;
 import java.io.File;
 
 import org.apache.tools.ant.types.FileSet;
+import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.AncestorInPath;
@@ -48,6 +50,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.annotation.CheckForNull;
 
 import net.sf.json.JSONObject;
 import javax.annotation.Nonnull;
@@ -74,7 +77,7 @@ public class ArtifactArchiver extends Recorder implements SimpleBuildStep {
     /**
      * Possibly null 'excludes' pattern as in Ant.
      */
-    private String excludes = "";
+    private String excludes;
 
     @Deprecated
     private Boolean latestOnly;
@@ -137,7 +140,7 @@ public class ArtifactArchiver extends Recorder implements SimpleBuildStep {
     // Backwards compatibility for older builds
     public Object readResolve() {
         if (allowEmptyArchive == null) {
-            this.allowEmptyArchive = Boolean.getBoolean(ArtifactArchiver.class.getName()+".warnOnEmpty");
+            this.allowEmptyArchive = SystemProperties.getBoolean(ArtifactArchiver.class.getName()+".warnOnEmpty");
         }
         if (defaultExcludes == null){
             defaultExcludes = true;
@@ -152,11 +155,11 @@ public class ArtifactArchiver extends Recorder implements SimpleBuildStep {
         return artifacts;
     }
 
-    public String getExcludes() {
+    public @CheckForNull String getExcludes() {
         return excludes;
     }
 
-    @DataBoundSetter public final void setExcludes(String excludes) {
+    @DataBoundSetter public final void setExcludes(@CheckForNull String excludes) {
         this.excludes = Util.fixEmptyAndTrim(excludes);
     }
 
@@ -306,7 +309,7 @@ public class ArtifactArchiver extends Recorder implements SimpleBuildStep {
     @Deprecated
     public static volatile DescriptorImpl DESCRIPTOR;
 
-    @Extension
+    @Extension @Symbol("archiveArtifacts")
     public static class DescriptorImpl extends BuildStepDescriptor<Publisher> {
         public DescriptorImpl() {
             DESCRIPTOR = this; // backward compatibility

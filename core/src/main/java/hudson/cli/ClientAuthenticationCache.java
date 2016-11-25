@@ -51,11 +51,8 @@ public class ClientAuthenticationCache implements Serializable {
             }
         });
         if (store.exists()) {
-            InputStream istream = store.read();
-            try {
+            try (InputStream istream = store.read()) {
                 props.load(istream);
-            } finally {
-                istream.close();
             }
         }
     }
@@ -72,9 +69,7 @@ public class ClientAuthenticationCache implements Serializable {
         try {
             UserDetails u = h.getSecurityRealm().loadUserByUsername(userName.getPlainText());
             return new UsernamePasswordAuthenticationToken(u.getUsername(), "", u.getAuthorities());
-        } catch (AuthenticationException e) {
-            return Jenkins.ANONYMOUS;
-        } catch (DataAccessException e) {
+        } catch (AuthenticationException | DataAccessException e) {
             return Jenkins.ANONYMOUS;
         }
     }
@@ -111,11 +106,8 @@ public class ClientAuthenticationCache implements Serializable {
     }
 
     private void save() throws IOException, InterruptedException {
-        OutputStream os = store.write();
-        try {
-            props.store(os,"Credential store");
-        } finally {
-            os.close();
+        try (OutputStream os = store.write()) {
+            props.store(os, "Credential store");
         }
         // try to protect this file from other users, if we can.
         store.chmod(0600);
