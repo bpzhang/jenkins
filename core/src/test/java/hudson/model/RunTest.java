@@ -25,12 +25,13 @@
 package hudson.model;
 
 import java.io.IOException;
-import hudson.model.Run.Artifact;
 import java.io.File;
 import java.io.PrintWriter;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.TimeZone;
+import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -189,7 +190,8 @@ public class RunTest {
         for (int i = 1; i < 10; i++) {
             assertEquals("dummy" + (10+i), logLines.get(i));
         }
-        assertEquals("[...truncated 68 B...]", logLines.get(0));
+        int truncatedCount = 10* ("dummyN".length() + System.getProperty("line.separator").length()) - 2;
+        assertEquals("[...truncated "+truncatedCount+" B...]", logLines.get(0));
     }
 
     @Test
@@ -210,5 +212,50 @@ public class RunTest {
         assertEquals("b2", logLines.get(1));
         assertEquals("", logLines.get(2));
         assertEquals("c3", logLines.get(3));
+    }
+
+    @Test
+    public void compareRunsFromSameJobWithDifferentNumbers() throws Exception {
+        final ItemGroup group = Mockito.mock(ItemGroup.class);
+        final Job j = Mockito.mock(Job.class);
+
+        Mockito.when(j.getParent()).thenReturn(group);
+        Mockito.when(group.getFullName()).thenReturn("j");
+        Mockito.when(j.assignBuildNumber()).thenReturn(1, 2);
+
+        Run r1 = new Run(j) {};
+        Run r2 = new Run(j) {};
+
+        final Set<Run> treeSet = new TreeSet<>();
+        treeSet.add(r1);
+        treeSet.add(r2);
+
+        assertTrue(r1.compareTo(r2) < 0);
+        assertTrue(treeSet.size() == 2);
+    }
+
+    @Issue("JENKINS-42319")
+    @Test
+    public void compareRunsFromDifferentParentsWithSameNumber() throws Exception {
+        final ItemGroup group1 = Mockito.mock(ItemGroup.class);
+        final ItemGroup group2 = Mockito.mock(ItemGroup.class);
+        final Job j1 = Mockito.mock(Job.class);
+        final Job j2 = Mockito.mock(Job.class);
+        Mockito.when(j1.getParent()).thenReturn(group1);
+        Mockito.when(j2.getParent()).thenReturn(group2);
+        Mockito.when(group1.getFullName()).thenReturn("g1");
+        Mockito.when(group2.getFullName()).thenReturn("g2");
+        Mockito.when(j1.assignBuildNumber()).thenReturn(1);
+        Mockito.when(j2.assignBuildNumber()).thenReturn(1);
+
+        Run r1 = new Run(j1) {};
+        Run r2 = new Run(j2) {};
+
+        final Set<Run> treeSet = new TreeSet<>();
+        treeSet.add(r1);
+        treeSet.add(r2);
+
+        assertTrue(r1.compareTo(r2) != 0);
+        assertTrue(treeSet.size() == 2);
     }
 }

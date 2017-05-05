@@ -56,6 +56,7 @@ import hudson.util.RunList;
 import hudson.util.XStream2;
 import hudson.views.ListViewColumn;
 import hudson.widgets.Widget;
+import javax.annotation.Nonnull;
 import jenkins.model.Jenkins;
 import jenkins.model.ModelObjectWithChildren;
 import jenkins.model.item_category.Categories;
@@ -238,6 +239,7 @@ public abstract class View extends AbstractModelObject implements AccessControll
      * @see #rename(String)
      */
     @Exported(visibility=2,name="name")
+    @Nonnull
     public String getViewName() {
         return name;
     }
@@ -412,14 +414,14 @@ public abstract class View extends AbstractModelObject implements AccessControll
     }
 
     /**
-     * If this view uses &lt;t:projectView> for rendering, this method returns columns to be displayed.
+     * If this view uses {@code <t:projectView>} for rendering, this method returns columns to be displayed.
      */
     public Iterable<? extends ListViewColumn> getColumns() {
-        return ListViewColumn.createDefaultInitialColumnList();
+        return ListViewColumn.createDefaultInitialColumnList(this);
     }
 
     /**
-     * If this view uses &lt;t:projectView> for rendering, this method returns the indenter used
+     * If this view uses {@code t:projectView} for rendering, this method returns the indenter used
      * to indent each row.
      */
     public Indenter getIndenter() {
@@ -1184,12 +1186,18 @@ public abstract class View extends AbstractModelObject implements AccessControll
         }
 
         // try to reflect the changes by reloading
-
         try (InputStream in = new BufferedInputStream(new ByteArrayInputStream(out.toString().getBytes("UTF-8")))){
             // Do not allow overwriting view name as it might collide with another
             // view in same ViewGroup and might not satisfy Jenkins.checkGoodName.
             String oldname = name;
-            Jenkins.XSTREAM.unmarshal(new Xpp3Driver().createReader(in), this);
+            Object o = Jenkins.XSTREAM.unmarshal(new Xpp3Driver().createReader(in), this);
+            if (!o.getClass().equals(getClass())) {
+                // ensure that we've got the same view type. extending this code to support updating
+                // to different view type requires destroying & creating a new view type
+                throw new IOException("Expecting view type: "+this.getClass()+" but got: "+o.getClass()+" instead." +
+                    "\nShould you needed to change to a new view type, you must first delete and then re-create " +
+                    "the view with the new view type.");
+            }
             name = oldname;
         } catch (StreamException | ConversionException | Error e) {// mostly reflection errors
             throw new IOException("Unable to read",e);
@@ -1219,11 +1227,30 @@ public abstract class View extends AbstractModelObject implements AccessControll
         return Jenkins.getInstance().<View,ViewDescriptor>getDescriptorList(View.class);
     }
 
+    /**
+     * Returns the {@link ViewDescriptor} instances that can be instantiated for the {@link ViewGroup} in the current
+     * {@link StaplerRequest}.
+     * <p>
+     * <strong>NOTE: Historically this method is only ever called from a {@link StaplerRequest}</strong>
+     * @return the list of instantiable {@link ViewDescriptor} instances for the current {@link StaplerRequest}
+     */
+    @Nonnull
     public static List<ViewDescriptor> allInstantiable() {
         List<ViewDescriptor> r = new ArrayList<ViewDescriptor>();
-        for (ViewDescriptor d : all())
-            if(d.isInstantiable())
+        StaplerRequest request = Stapler.getCurrentRequest();
+        if (request == null) {
+            throw new IllegalStateException("This method can only be invoked from a stapler request");
+        }
+        ViewGroup owner = request.findAncestorObject(ViewGroup.class);
+        if (owner == null) {
+            throw new IllegalStateException("This method can only be invoked from a request with a ViewGroup ancestor");
+        }
+        for (ViewDescriptor d : DescriptorVisibilityFilter.apply(owner, all())) {
+            if (d.isApplicableIn(owner) && d.isInstantiable()
+                    && owner.getACL().hasCreatePermission(Jenkins.getAuthentication(), owner, d)) {
                 r.add(d);
+            }
+        }
         return r;
     }
 
@@ -1268,6 +1295,7 @@ public abstract class View extends AbstractModelObject implements AccessControll
         if (mode==null || mode.length()==0) {
             if(isXmlSubmission) {
                 View v = createViewFromXML(name, req.getInputStream());
+                owner.getACL().checkCreatePermission(owner, v.getDescriptor());
                 v.owner = owner;
                 rsp.setStatus(HttpServletResponse.SC_OK);
                 return v;
@@ -1276,7 +1304,7 @@ public abstract class View extends AbstractModelObject implements AccessControll
         }
 
         View v;
-        if (mode!=null && mode.equals("copy")) {
+        if ("copy".equals(mode)) {
             v = copy(req, owner, name);
         } else {
             ViewDescriptor descriptor = all().findByName(mode);
@@ -1287,6 +1315,7 @@ public abstract class View extends AbstractModelObject implements AccessControll
             // create a view
             v = descriptor.newInstance(req,req.getSubmittedForm());
         }
+        owner.getACL().checkCreatePermission(owner, v.getDescriptor());
         v.owner = owner;
 
         // redirect to the config screen

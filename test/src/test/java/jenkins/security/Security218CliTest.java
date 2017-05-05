@@ -32,7 +32,6 @@ import java.io.File;
 import java.io.PrintStream;
 import jenkins.security.security218.Payload;
 import org.jenkinsci.remoting.RoleChecker;
-import org.junit.Ignore;
 import org.junit.Test;
 import static org.junit.Assert.*;
 import org.junit.Rule;
@@ -42,6 +41,7 @@ import org.jvnet.hudson.test.TestExtension;
 import org.jvnet.hudson.test.recipes.PresetData;
 import org.kohsuke.args4j.Argument;
 
+@SuppressWarnings("deprecation") // Remoting-based CLI usages intentional
 public class Security218CliTest {
 
     @Rule
@@ -58,7 +58,7 @@ public class Security218CliTest {
     @Test
     @Issue("SECURITY-218")
     public void probeCommonsCollections1() throws Exception {
-        probe(Payload.CommonsCollections1, PayloadCaller.EXIT_CODE_REJECTED);
+        probe(Payload.CommonsCollections1, 1);
     }
     
     @PresetData(PresetData.DataSet.ANONYMOUS_READONLY)
@@ -74,7 +74,7 @@ public class Security218CliTest {
     @Test
     @Issue("SECURITY-317")
     public void probeCommonsCollections3() throws Exception {
-        probe(Payload.CommonsCollections3, PayloadCaller.EXIT_CODE_REJECTED);
+        probe(Payload.CommonsCollections3, 1);
     }
 
     @PresetData(PresetData.DataSet.ANONYMOUS_READONLY)
@@ -88,14 +88,14 @@ public class Security218CliTest {
     @Test
     @Issue("SECURITY-317")
     public void probeCommonsCollections5() throws Exception {
-        probe(Payload.CommonsCollections5, PayloadCaller.EXIT_CODE_REJECTED);
+        probe(Payload.CommonsCollections5, 1);
     }
 
     @PresetData(PresetData.DataSet.ANONYMOUS_READONLY)
     @Test
     @Issue("SECURITY-317")
     public void probeCommonsCollections6() throws Exception {
-        probe(Payload.CommonsCollections6, PayloadCaller.EXIT_CODE_REJECTED);
+        probe(Payload.CommonsCollections6, 1);
     }
 
     @PresetData(PresetData.DataSet.ANONYMOUS_READONLY)
@@ -142,7 +142,7 @@ public class Security218CliTest {
     
     //TODO: Fix the conversion layer (not urgent)
     // There is an issue in the conversion layer after the migration to another XALAN namespace
-    // with newer libs. SECURITY-218 does not apper in this case in manual tests anyway
+    // with newer libs. SECURITY-218 does not appear in this case in manual tests anyway
     @PresetData(PresetData.DataSet.ANONYMOUS_READONLY)
     @Test
     @Issue("SECURITY-218")
@@ -170,17 +170,26 @@ public class Security218CliTest {
         probe(Payload.Ldap, PayloadCaller.EXIT_CODE_REJECTED);
     }
 
+    @PresetData(PresetData.DataSet.ANONYMOUS_READONLY)
+    @Test
+    @Issue("SECURITY-429")
+    public void jsonLibSignedObject() throws Exception {
+        probe(Payload.JsonLibSignedObject, 1);
+    }
+
     private void probe(Payload payload, int expectedResultCode) throws Exception {
         File file = File.createTempFile("security-218", payload + "-payload");
         File moved = new File(file.getAbsolutePath() + "-moved");
         
         // Bypassing _main because it does nothing interesting here.
         // Hardcoding CLI protocol version 1 (CliProtocol) because it is easier to sniff.
-        int exitCode = new CLI(r.getURL()).execute("send-payload",
-                payload.toString(), "mv " + file.getAbsolutePath() + " " + moved.getAbsolutePath());
-        assertEquals("Unexpected result code.", expectedResultCode, exitCode);
-        assertTrue("Payload should not invoke the move operation " + file, !moved.exists());
-        file.delete();
+        try (CLI cli = new CLI(r.getURL())) {
+            int exitCode = cli.execute("send-payload",
+                    payload.toString(), "mv " + file.getAbsolutePath() + " " + moved.getAbsolutePath());
+            assertEquals("Unexpected result code.", expectedResultCode, exitCode);
+            assertTrue("Payload should not invoke the move operation " + file, !moved.exists());
+            file.delete();
+        }
     }
     
     @TestExtension()
@@ -196,8 +205,8 @@ public class Security218CliTest {
         
         @Argument(metaVar = "command", usage = "Command to be launched by the payload", required = true, index = 1)
         public String command;
-        
 
+        @Override
         protected int run() throws Exception {
             Payload payloadItem = Payload.valueOf(this.payload);
             PayloadCaller callable = new PayloadCaller(payloadItem, command);
@@ -251,7 +260,7 @@ public class Security218CliTest {
                 }
 
                 if (cause instanceof SecurityException) {
-                    // It should happen if the remote chanel reject a class.
+                    // It should happen if the remote channel reject a class.
                     // That's what we have done in SECURITY-218 => may be OK
                     if (cause.getMessage().contains("Rejected")) {
                         // OK
@@ -265,7 +274,7 @@ public class Security218CliTest {
                 final String message = cause.getMessage();
                 if (message != null && message.contains("cannot be cast to java.util.Set")) {
                     // We ignore this exception, because there is a known issue in the test payload
-                    // CommonsCollections1, CommonsCollections2 and Groovy1 fail witth this error,
+                    // CommonsCollections1, CommonsCollections2 and Groovy1 fail with this error,
                     // but actually it means that the conversion has been triggered
                     return EXIT_CODE_ASSIGNMENT_ISSUE;
                 } else {

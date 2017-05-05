@@ -24,6 +24,7 @@
 package hudson.model;
 
 import hudson.FilePath;
+import hudson.Functions;
 import hudson.Util;
 import hudson.model.Queue.Executable;
 import hudson.model.queue.Executables;
@@ -289,7 +290,7 @@ public class Executor extends Thread implements ModelObject {
             } else {
                 pw.println("Termination trace follows:");
                 for (Computer.TerminationRequest request : owner.getTerminatedBy()) {
-                    request.printStackTrace(pw);
+                    Functions.printStackTrace(request, pw);
                 }
             }
         }
@@ -510,6 +511,7 @@ public class Executor extends Thread implements ModelObject {
      *      null if the executor is idle.
      */
     @Exported
+    @CheckForNull
     public WorkUnit getCurrentWorkUnit() {
         lock.readLock().lock();
         try {
@@ -940,12 +942,7 @@ public class Executor extends Thread implements ModelObject {
             return null;
         }
         for (Computer computer : jenkins.getComputers()) {
-            for (Executor executor : computer.getExecutors()) {
-                if (executor.getCurrentExecutable() == executable) {
-                    return executor;
-                }
-            }
-            for (Executor executor : computer.getOneOffExecutors()) {
+            for (Executor executor : computer.getAllExecutors()) {
                 if (executor.getCurrentExecutable() == executable) {
                     return executor;
                 }
@@ -957,7 +954,7 @@ public class Executor extends Thread implements ModelObject {
     /**
      * Returns the estimated duration for the executable.
      * Protects against {@link AbstractMethodError}s if the {@link Executable} implementation
-     * was compiled against Hudson < 1.383
+     * was compiled against Hudson prior to 1.383
      *
      * @deprecated as of 1.388
      *      Use {@link Executables#getEstimatedDurationFor(Queue.Executable)}
